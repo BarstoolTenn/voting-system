@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geofenced Voting with Phone Verification</title>
+    <!-- Firebase App (the core Firebase SDK) -->
+    <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-app.js"></script>
+    <!-- Add Firebase Authentication -->
+    <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-auth.js"></script>
+    <!-- Add Firebase Firestore -->
+    <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-firestore.js"></script>
+</head>
+<body>
+    <h1>Geofenced Voting System with Phone Verification</h1>
+
+    <!-- Phone verification form -->
+    <div id="phoneNumberForm">
+        <h2>Phone Number Verification</h2>
+        <input type="text" id="phoneNumber" placeholder="Enter phone number">
+        <div id="recaptcha-container"></div>
+        <button onclick="sendVerificationCode()">Send Verification Code</button>
+    </div>
+
+    <!-- OTP form -->
+    <div id="otpForm" style="display: none;">
+        <h2>Enter OTP</h2>
+        <input type="text" id="verificationCode" placeholder="Enter OTP">
+        <button onclick="verifyCode()">Verify OTP</button>
+    </div>
+
+    <!-- Geolocation and Voting form -->
+    <div id="locationForm" style="display: none;">
+        <h2>Verify Your Location</h2>
+        <button onclick="verifyLocation()">Verify Location</button>
+    </div>
+
+    <div id="voteForm" style="display: none;">
+        <h2>Vote</h2>
+        <label for="voteOption">Choose your option:</label><br>
+        <select id="voteOption">
+            <option value="Option1">Option 1</option>
+            <option value="Option2">Option 2</option>
+        </select><br><br>
+        <button onclick="submitVote()">Submit Vote</button>
+    </div>
+
+    <script>
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            messagingSenderId: "YOUR_SENDER_ID",
+            appId: "YOUR_APP_ID",
+            measurementId: "YOUR_MEASUREMENT_ID"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
+        // Set up recaptcha verifier
+        window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', {
+            'size': 'normal',
+            'callback': (response) => {
+                // reCAPTCHA solved - will proceed with sendVerificationCode()
+            }
+        });
+
+        // Send verification code to phone number
+        function sendVerificationCode() {
+            const phoneNumber = document.getElementById("phoneNumber").value;
+            const appVerifier = window.recaptchaVerifier;
+            auth.signInWithPhoneNumber(phoneNumber, appVerifier)
+                .then((confirmationResult) => {
+                    window.confirmationResult = confirmationResult;
+                    alert("OTP sent");
+                    document.getElementById("phoneNumberForm").style.display = "none";
+                    document.getElementById("otpForm").style.display = "block";
+                }).catch((error) => {
+                    alert("Error during verification: " + error.message);
+                });
+        }
+
+        // Verify OTP
+        function verifyCode() {
+            const code = document.getElementById("verificationCode").value;
+            confirmationResult.confirm(code).then((result) => {
+                alert("Phone verified successfully.");
+                document.getElementById("otpForm").style.display = "none";
+                document.getElementById("locationForm").style.display = "block";
+            }).catch((error) => {
+                alert("Invalid OTP");
+            });
+        }
+
+        // Exact location of the bar
+        const allowedLat = 35.9778947232137;
+        const allowedLon = -83.92377682351272;
+        const radius = 100; // Radius in meters around the bar
+
+        // Verify geolocation
+        function verifyLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(showPosition, showError);
+            } else {
+                alert("Geolocation is not supported by this browser.");
+            }
+        }
+
+        function showPosition(position) {
+            const userLat = position.coords.latitude;
+            const userLon = position.coords.longitude;
+
+            if (isWithinRadius(userLat, userLon, allowedLat, allowedLon, radius)) {
+                alert("You are within the allowed location. You can now vote.");
+                document.getElementById("locationForm").style.display = "none";
+                document.getElementById("voteForm").style.display = "block";
+            } else {
+                alert("You are not in the allowed location for voting.");
+            }
+        }
+
+        function showError(error) {
+            switch (error.code) {
+                case error.PERMISSION_DENIED:
+                    alert("User denied the request for Geolocation.");
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    alert("Location information is unavailable.");
+                    break;
+                case error.TIMEOUT:
+                    alert("The request to get user location timed out.");
+                    break;
+                case error.UNKNOWN_ERROR:
+                    alert("An unknown error occurred.");
+                    break;
+            }
+        }
+
+        function isWithinRadius(userLat, userLon, allowedLat, allowedLon, radius) {
+            const toRad = value => value * Math.PI / 180;
+            const earthRadius = 6371; // Radius of the Earth in km
+
+            const dLat = toRad(allowedLat - userLat);
+            const dLon = toRad(allowedLon - userLon);
+
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                      Math.cos(toRad(userLat)) * Math.cos(toRad(allowedLat)) *
+                      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+            const distance = earthRadius * c * 1000; // Convert to meters
+
+            return distance <= radius;
+        }
+
+        // Submit vote
+        function submitVote() {
+            const voteOption = document.getElementById("voteOption").value;
+            const user = firebase.auth().currentUser;
+            
+            // Save vote in Firestore
+            db.collection("votes").add({
+                phoneNumber: user.phoneNumber,
+                vote: voteOption,
+                timestamp: firebase.firestore.FieldValue.serverTimestamp()
+            }).then(() => {
+                alert("Vote submitted successfully!");
+            }).catch((error) => {
+                alert("Error submitting vote: " + error.message);
+            });
+        }
+    </script>
+</body>
+</html>
+git init
+git add .
+git commit -m "Initial commit"
+git remote add origin https://github.com/BarstoolTenn/voting-system.git
+git push -u origin main
